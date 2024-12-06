@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.2 <0.9.0;
+
+contract Marketplace {
+    struct Item {
+        uint id;
+        string name;
+        uint price;
+        address payable seller;
+        address owner;
+        bool isSold;
+    }
+
+    uint public itemCount = 0;
+    mapping (uint => Item) public items;
+    mapping(address => uint[]) public ownedItems;
+
+    // Event
+    event ItemListed(uint id, string name, uint price, address seller);
+    event ItemPurchased(uint id, address buyer);
+    event ItemDeleted(uint id, address seller);
+
+    receive() external payable {}
+    fallback() external payable {}
+
+    function listItem(string memory _name, uint _price) public {
+        require(_price > 0, "Price must be greater than 0");
+
+        itemCount++;
+        items[itemCount] = Item(itemCount, _name, _price, payable(msg.sender), msg.sender, false);
+        ownedItems[msg.sender].push(itemCount);
+
+        emit ItemListed(itemCount, _name, _price, msg.sender);
+    }
+
+    function purchaseItem(uint _id) public payable {
+        Item storage item = items[_id];
+        require(_id > 0 && _id <= itemCount, "Invalid item ID");
+        require(msg.value == item.price, "Incorrect price");
+        require(!item.isSold, "Item already sold");
+        require(msg.sender != item.seller, "Seller cannot buy their own item");
+
+        item.isSold = true;
+
+        (bool sent, ) = item.seller.call{value: msg.value}("");
+        require(sent, "Failed to transfer Ether to the seller");
+
+        _transferOwnership(_id, item.seller, msg.sender);
+
+        emit ItemPurchased(_id, msg.sender);
+    }
+
+    function _transferOwnership(uint _id, address _from, address _to) internal {
+        require(_to != address(0), "Invalid recipient address");
+
+        Item storage item = items[_id];
+        item.owner = _to;
+
+        uint[] storage fromItems = ownedItems[_from];
+        for (uint i = 0; i < fromItems.length; i++) {
+            if (fromItems[i] == _id) {
+                fromItems[i] = fromItems[fromItems.length - 1];
+                fromItems.pop();
+                break;
+            }
+        }
+
+        ownedItems[_to].push(_id);
+    }
+
+    function transferItem(uint _id, address _to) public {
+        Item storage item = items[_id];
+        require(_id > 0 && _id <= itemCount, "Item does not exist");
+        require(msg.sender == item.owner, "You are not the owner!");
+        require(!item.isSold, "Sold items cannot be transferred.");
+        _transferOwnership(_id, msg.sender, _to);
+    }
+
+    function deleteItem(uint256 _id) public {
+        require(_id > 0 && _id <= itemCount, "Invalid item ID");
+        Item storage item = items[_id];
+        require(item.seller == msg.sender && item.owner == msg.sender, "You are no longer the owner or seller.");
+        require(!item.isSold, "Sold items cannot be deleted.");
+
+        uint[] storage sellerItems = ownedItems[msg.sender];
+        for (uint i = 0; i < sellerItems.length; i++) {
+            if (sellerItems[i] == _id) {
+                sellerItems[i] = sellerItems[sellerItems.length - 1];
+                sellerItems.pop();
+                break;
+            }
+        }
+
+        delete items[_id];
+        emit ItemDeleted(_id, msg.sender);
+    }
+
+    function getItemsByOwner(address _owner) public view returns (uint[] memory) {
+        return ownedItems[_owner];
+    }
+}
+//0x530ed5aa0c66cf4dfbf3209c085617c0fc26513e
